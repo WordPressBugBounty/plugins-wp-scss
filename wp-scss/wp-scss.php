@@ -3,7 +3,7 @@
  * Plugin Name: WP-SCSS
  * Plugin URI: https://github.com/ConnectThink/WP-SCSS
  * Description: Compiles scss files live on WordPress.
- * Version: 5.0.0
+ * Version: 5.1.1
  * Author: Connect Think
  * Author URI: http://connectthink.com
  * License: GPLv3
@@ -29,6 +29,10 @@
  * 1. PLUGIN GLOBAL VARIABLES
  */
 
+// WP-CLI (and anything else that includes plugins from inside a function) gives this file a local scope,
+// so declare the variables that later functions read with `global`
+global $wpscss_options, $wpscss_settings, $base_compiling_folder;
+
 // Plugin Paths
 if (!defined('WPSCSS_PLUGIN_NAME'))
   define('WPSCSS_PLUGIN_NAME', trim(dirname(plugin_basename(__FILE__)), '/'));
@@ -44,7 +48,7 @@ if (!defined('WPSCSS_VERSION_KEY'))
   define('WPSCSS_VERSION_KEY', 'wpscss_version');
 
 if (!defined('WPSCSS_VERSION_NUM'))
-  define('WPSCSS_VERSION_NUM', '5.0.0');
+  define('WPSCSS_VERSION_NUM', '5.1.1');
 
 // Add version to options table
 if ( get_option( WPSCSS_VERSION_KEY ) !== false ) {
@@ -161,6 +165,23 @@ function get_base_dir_from_name($name_or_old_path){
 }
 
 $wpscss_options = get_option( 'wpscss_options' );
+
+// WP_SCSS_OPTIONS (an array defined in wp-config.php) overrides the saved settings, so a setup can live in version control
+if ( defined('WP_SCSS_OPTIONS') && is_array(WP_SCSS_OPTIONS) ) {
+  $wpscss_code_options = WP_SCSS_OPTIONS;
+  foreach ( array('scss_dir', 'css_dir', 'cache_dir') as $dir ) {
+    if ( !empty($wpscss_code_options[$dir]) ) {
+      $wpscss_code_options[$dir] = trailingslashit($wpscss_code_options[$dir]);
+    }
+  }
+  // The settings form stores checkboxes as '1' and needs_compiling() compares strictly, so accept true/1 too
+  foreach ( array('enqueue', 'always_recompile') as $flag ) {
+    if ( array_key_exists($flag, $wpscss_code_options) ) {
+      $wpscss_code_options[$flag] = $wpscss_code_options[$flag] && $wpscss_code_options[$flag] !== '0' ? '1' : '0';
+    }
+  }
+  $wpscss_options = wpscss_plugin_db_cleanup(array_merge(is_array($wpscss_options) ? $wpscss_options : array(), $wpscss_code_options));
+}
 $base_compiling_folder = isset($wpscss_options['base_compiling_folder']) ? get_base_dir_from_name($wpscss_options['base_compiling_folder']) : get_stylesheet_directory();
 $scss_dir_setting = !empty($wpscss_options['scss_dir']) ? $wpscss_options['scss_dir'] : '';
 $css_dir_setting = !empty($wpscss_options['css_dir']) ? $wpscss_options['css_dir'] : '';
@@ -176,20 +197,20 @@ if( $scss_dir_setting == false || $css_dir_setting == false ) {
   add_action('admin_notices', 'wpscss_settings_error');
   return 0; //exits
 
-  // Checks if SCSS directory exists
-} elseif ( !is_dir($base_compiling_folder . $scss_dir_setting) ) {
+  // Checks if SCSS directory exists and is readable (DirectoryIterator throws a fatal otherwise)
+} elseif ( !is_dir($base_compiling_folder . $scss_dir_setting) || !is_readable($base_compiling_folder . $scss_dir_setting) ) {
   add_action('admin_notices', function() use ($base_compiling_folder, $scss_dir_setting){
     echo '<div class="notice notice-error">
-      <p><strong>WP-SCSS:</strong> The SCSS directory does not exist (' . esc_html($base_compiling_folder . $scss_dir_setting) . '). Please create the directory or <a href="' . get_bloginfo('wpurl') . '/wp-admin/admin.php?page=wpscss_options">update your settings.</a></p>
+      <p><strong>WP-SCSS:</strong> The SCSS directory does not exist or is not readable (' . esc_html($base_compiling_folder . $scss_dir_setting) . '). Please create the directory, check its permissions, or <a href="' . get_bloginfo('wpurl') . '/wp-admin/admin.php?page=wpscss_options">update your settings.</a></p>
       </div>';
   });
   return 0; //exits
 
-  // Checks if CSS directory exists
-} elseif ( !is_dir($base_compiling_folder . $css_dir_setting) ) {
+  // Checks if CSS directory exists and is readable
+} elseif ( !is_dir($base_compiling_folder . $css_dir_setting) || !is_readable($base_compiling_folder . $css_dir_setting) ) {
   add_action('admin_notices', function() use ($base_compiling_folder, $css_dir_setting){
     echo '<div class="notice notice-error">
-      <p><strong>WP-SCSS:</strong> The CSS directory does not exist (' . esc_html($base_compiling_folder . $css_dir_setting) . '). Please create the directory or <a href="' . get_bloginfo('wpurl') . '/wp-admin/admin.php?page=wpscss_options">update your settings.</a></p>
+      <p><strong>WP-SCSS:</strong> The CSS directory does not exist or is not readable (' . esc_html($base_compiling_folder . $css_dir_setting) . '). Please create the directory, check its permissions, or <a href="' . get_bloginfo('wpurl') . '/wp-admin/admin.php?page=wpscss_options">update your settings.</a></p>
       </div>';
   });
   return 0; //exits
@@ -247,6 +268,40 @@ function wp_scss_compile() {
   $wpscss_compiler->set_variables($variables);
   $wpscss_compiler->compile();
 }
+
+/**
+ * 6b. COMPILE ON DEMAND
+ *
+ * The settings page "Compile Now" button (admins only, nonce-checked) and a deploy webhook:
+ * POST action=wpscss_compile and key=WP_SCSS_COMPILE_KEY to admin-post.php, only when that constant is defined.
+ * The key is read from the POST body only, so it stays out of URLs and access logs.
+ */
+function wpscss_compile_request() {
+  global $wpscss_compiler;
+
+  $key = defined('WP_SCSS_COMPILE_KEY') ? (string) WP_SCSS_COMPILE_KEY : '';
+  $by_key = $key !== '' && isset($_POST['key']) && is_string($_POST['key']) && hash_equals($key, (string) wp_unslash($_POST['key']));
+
+  if ( !$by_key ) {
+    if ( !current_user_can('manage_options') ) {
+      wp_die('Sorry, you are not allowed to compile SCSS.', '', array('response' => 403));
+    }
+    check_admin_referer('wpscss_compile');
+  }
+
+  wp_scss_compile();
+  $errors = $wpscss_compiler->get_compile_errors();
+
+  if ( $by_key ) {
+    wp_send_json(array('success' => empty($errors), 'errors' => $errors), empty($errors) ? 200 : 500);
+  }
+
+  set_transient('wpscss_compile_result_' . get_current_user_id(), $errors, MINUTE_IN_SECONDS);
+  wp_safe_redirect(admin_url('options-general.php?page=wpscss_options&wpscss_compiled=1'));
+  exit;
+}
+add_action('admin_post_wpscss_compile', 'wpscss_compile_request');
+add_action('admin_post_nopriv_wpscss_compile', 'wpscss_compile_request');
 
 /**
  * 7. HANDLE COMPILING ERRORS

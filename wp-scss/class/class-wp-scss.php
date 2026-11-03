@@ -24,6 +24,9 @@ class Wp_Scss {
 
   /** @var string - type of sourcemaps to generate */
   private $sourcemaps;
+
+  /** @var array - names of the files this compile run wrote to the cache directory */
+  private $cache_files = array();
   
   /**
    * Set values for Wp_Scss::properties
@@ -100,6 +103,9 @@ class Wp_Scss {
    */
   public function compile() {
 
+    // A manual compile can follow the automatic one in the same request; report only this run
+    $this->compile_errors = array();
+    $this->cache_files = array();
     $input_files = array();
 
     // Loop through directory and get .scss file that do not start with '_'
@@ -120,19 +126,19 @@ class Wp_Scss {
 
     if (count($this->compile_errors) < 1) {
       if  ( is_writable($this->css_dir) ) {
-        foreach (new DirectoryIterator($this->cache) as $cache_file) {
-          if (pathinfo($cache_file->getFilename(), PATHINFO_EXTENSION) == 'css') {
-            // rename() is atomic, so a concurrent visitor never sees a half-written stylesheet;
-            // it fails across filesystems (e.g. uploads on its own mount), so fall back to copy
-            if (!@rename($this->cache . $cache_file, $this->css_dir . $cache_file)) {
-              if (copy($this->cache . $cache_file, $this->css_dir . $cache_file)) {
-                unlink($this->cache . $cache_file->getFilename());
-              } else {
-                array_push($this->compile_errors, array(
-                  'file' => $cache_file->getFilename(),
-                  'message' => "File Permissions Error, could not write to the CSS directory."
-                ));
-              }
+        // Publish only what this run wrote: files a failed earlier run left in the cache would otherwise go live,
+        // including CSS for SCSS files that have since been deleted
+        foreach ($this->cache_files as $cache_file) {
+          // rename() is atomic, so a concurrent visitor never sees a half-written stylesheet;
+          // it fails across filesystems (e.g. uploads on its own mount), so fall back to copy
+          if (!@rename($this->cache . $cache_file, $this->css_dir . $cache_file)) {
+            if (copy($this->cache . $cache_file, $this->css_dir . $cache_file)) {
+              unlink($this->cache . $cache_file);
+            } else {
+              array_push($this->compile_errors, array(
+                'file' => $cache_file,
+                'message' => "File Permissions Error, could not write to the CSS directory."
+              ));
             }
           }
         }
@@ -173,7 +179,6 @@ class Wp_Scss {
         $sourcemap_constant = 'ScssPhp\ScssPhp\Compiler::' . $this->sourcemaps;
         $this->scssc->setSourceMap(defined($sourcemap_constant) ? constant($sourcemap_constant) : Compiler::SOURCE_MAP_NONE);
         $this->scssc->setSourceMapOptions(array(
-          'sourceMapWriteTo' => $this->css_dir . $map, // absolute path to a file to write the map to
           'sourceMapURL' => $map, // url of the map
           'sourceMapBasepath' => rtrim(ABSPATH, '/'), // base path for filename normalization
           'sourceRoot' => home_url('/'), // This value is prepended to the individual entries in the 'source' field.
@@ -182,7 +187,19 @@ class Wp_Scss {
         $compilationResult = $this->scssc->compileString(file_get_contents($in), $in);
         $css = $compilationResult->getCss();
 
-        file_put_contents($this->cache . basename($out), $css);
+        if (file_put_contents($this->cache . basename($out), $css) === false) {
+          throw new Exception('Could not write to the cache directory.');
+        }
+        $this->cache_files[] = basename($out);
+
+        // scssphp 1.x returns the map instead of writing sourceMapWriteTo, so write it beside the CSS ourselves
+        $sourcemap = $compilationResult->getSourceMap();
+        if ($this->sourcemaps === 'SOURCE_MAP_FILE' && $sourcemap !== null) {
+          if (file_put_contents($this->cache . $map, $sourcemap) === false) {
+            throw new Exception('Could not write the source map to the cache directory.');
+          }
+          $this->cache_files[] = $map;
+        }
       } catch (Exception $e) {
         $errors = array (
           'file' => basename($in),
@@ -226,10 +243,11 @@ class Wp_Scss {
       return true;
     }
 
+    // CATCH_GET_CHILD skips unreadable subfolders instead of throwing a fatal on every page load
     $latest_scss = 0;
     $latest_css = 0;
 
-    foreach ( new RecursiveIteratorIterator(new RecursiveDirectoryIterator($this->scss_dir), RecursiveDirectoryIterator::SKIP_DOTS) as $sfile ) {
+    foreach ( new RecursiveIteratorIterator(new RecursiveDirectoryIterator($this->scss_dir, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY, RecursiveIteratorIterator::CATCH_GET_CHILD) as $sfile ) {
       if (pathinfo($sfile->getFilename(), PATHINFO_EXTENSION) == 'scss') {
         $file_time = $sfile->getMTime();
 
@@ -239,7 +257,7 @@ class Wp_Scss {
       }
     }
 
-    foreach ( new RecursiveIteratorIterator(new RecursiveDirectoryIterator($this->css_dir), RecursiveDirectoryIterator::SKIP_DOTS) as $cfile ) {
+    foreach ( new RecursiveIteratorIterator(new RecursiveDirectoryIterator($this->css_dir, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY, RecursiveIteratorIterator::CATCH_GET_CHILD) as $cfile ) {
       if (pathinfo($cfile->getFilename(), PATHINFO_EXTENSION) == 'css') {
         $file_time = $cfile->getMTime();
 

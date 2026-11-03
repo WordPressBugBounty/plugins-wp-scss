@@ -6,10 +6,6 @@ Compiles .scss files on your wordpress install using [scssphp](https://github.co
 
 The plugin only compiles when changes have been made to the scss files. Compiles are made to the matching css file, so disabling this plugin will not take down your stylesheets. In the instance where a matching css file does not exist yet, the plugin will create the appropriate css file in the css directory.
 
-## Looking for new maintainer
-
-If you are interested in giving back to the open source plugin respond [here](https://github.com/ConnectThink/WP-SCSS/issues/242) with your interest
-
 ## Settings
 
 #### Directories
@@ -82,6 +78,24 @@ You can set SCSS variables in your theme or plugin by using the wp_scss_variable
     }
     add_filter('wp_scss_variables','wp_scss_set_variables');
 
+#### Configuring in wp-config.php
+
+To keep the settings in version control instead of the database, define `WP_SCSS_OPTIONS` in wp-config.php. Any key you set overrides the value saved on the settings page; keys you leave out still come from the settings page.
+
+    define('WP_SCSS_OPTIONS', array(
+      'base_compiling_folder' => 'Current Theme', // or Parent Theme, Child Theme, Uploads Directory, WP-SCSS Plugin
+      'scss_dir'              => '/scss/',
+      'css_dir'               => '/css/',
+      'cache_dir'             => '',               // empty uses plugins/wp-scss/cache/
+      'compiling_options'     => 'compressed',     // or expanded
+      'sourcemap_options'     => 'SOURCE_MAP_NONE', // or SOURCE_MAP_INLINE, SOURCE_MAP_FILE
+      'errors'                => 'show-logged-in', // or show, hide
+      'enqueue'               => true,             // false to enqueue the CSS yourself
+      'always_recompile'      => false,
+    ));
+
+The settings page lists which settings are being overridden.
+
 #### Always Recompile
 
 During development it's sometimes useful to force stylesheet compilation on every page load. Especially on hosts where filemtime() is not updating consistently.
@@ -89,6 +103,20 @@ During development it's sometimes useful to force stylesheet compilation on ever
 You can tell the plugin to always recompile in the plugin options page or by adding the following constant to your wp-config.php or functions.php file.
 
     define('WP_SCSS_ALWAYS_RECOMPILE', true);
+
+#### Compile on Demand
+
+The settings page has a **Compile Now** button that recompiles every SCSS file, whether or not anything changed.
+
+To compile from a deploy script, define a secret key in wp-config.php:
+
+    define('WP_SCSS_COMPILE_KEY', 'a-long-random-string'); // e.g. the output of: openssl rand -hex 32
+
+then POST it to admin-post.php after each deploy. Send the key on stdin so it never appears in the curl command line (`printf` is a shell builtin, so it doesn't show up in `ps` either):
+
+    printf '%s' "$WP_SCSS_COMPILE_KEY" | curl --data-urlencode action=wpscss_compile --data-urlencode key@- https://example.com/wp-admin/admin-post.php
+
+It answers with JSON (`{"success":true,"errors":[]}`), and HTTP 500 with the compile errors when compiling fails. The webhook is off unless the constant is defined.
 
 #### Compass Support
 
@@ -110,6 +138,14 @@ This plugin will only work with .scss format.
 
 ## Changelog
 
+- 5.1.1
+  - Fix: WP-CLI commands no longer log "Trying to access array offset on null" warnings, and compile errors and Always Recompile now work under WP-CLI. [#285](https://github.com/ConnectThink/WP-SCSS/pull/285)
+  - Fix: a failed compile can no longer leave files in the cache that go live on the next successful compile, and a failed cache write now stops the compile instead of publishing an older cached file. [#286](https://github.com/ConnectThink/WP-SCSS/pull/286)
+- 5.1.0
+  - New: a Compile Now button on the settings page, and an optional deploy webhook (define WP_SCSS_COMPILE_KEY, then POST to admin-post.php) to compile after a deploy. [#281](https://github.com/ConnectThink/WP-SCSS/pull/281), closes [#48](https://github.com/ConnectThink/WP-SCSS/issues/48)
+  - New: define WP_SCSS_OPTIONS in wp-config.php to set the plugin's settings in code; any key you set overrides the saved value. [#282](https://github.com/ConnectThink/WP-SCSS/pull/282), closes [#222](https://github.com/ConnectThink/WP-SCSS/issues/222)
+  - Fix: the File source map mode writes the .map file again (it had silently stopped). [#280](https://github.com/ConnectThink/WP-SCSS/pull/280), closes [#207](https://github.com/ConnectThink/WP-SCSS/issues/207)
+  - Fix: an unreadable SCSS or CSS directory shows an admin notice instead of a fatal error on every page. [#279](https://github.com/ConnectThink/WP-SCSS/pull/279), closes [#187](https://github.com/ConnectThink/WP-SCSS/issues/187)
 - 5.0.0
   - Updates ScssPHP to version [1.13.0](https://github.com/scssphp/scssphp/releases/tag/v1.13.0), the final 1.x release, and removes stray ScssPHP 2.x development files that had been bundled by mistake. [#275](https://github.com/ConnectThink/WP-SCSS/pull/275)
   - Fix: PHP 8.4 "implicitly marking parameter as nullable" deprecation notices. Thanks to [FreddyFY](https://github.com/ConnectThink/WP-SCSS/pull/276) and [#273](https://github.com/ConnectThink/WP-SCSS/issues/273)

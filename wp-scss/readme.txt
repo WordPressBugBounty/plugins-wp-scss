@@ -5,7 +5,7 @@ Plugin URI: https://github.com/ConnectThink/WP-SCSS
 Requires at least: 3.0.1
 Tested up to: 7.1
 Requires PHP: 7.2
-Stable tag: 5.0.0
+Stable tag: 5.1.1
 License: GPLv3 or later
 License URI: http://www.gnu.org/copyleft/gpl.html
 
@@ -18,10 +18,6 @@ Compiles .scss files on your wordpress install using [ScssPhp](https://github.co
 The plugin only compiles when changes have been made to the scss files. Compiles are made to the matching css file, so disabling this plugin will not take down your stylesheets. In the instance where a matching css file does not exist yet, the plugin will create the appropriate css file in the css directory.
 
 [Get detailed instructions on github](https://github.com/ConnectThink/WP-SCSS)
-
-== Looking for a new maintainer == 
-
-If you are interested in giving back to the open source plugin respond [here](https://github.com/ConnectThink/WP-SCSS/issues/242) with your interest
 
 == Installation ==
 
@@ -50,6 +46,10 @@ When importing in your scss file, you can leave off the underscore.
 > `@import 'subfile';`
 
 
+= Can I configure the plugin in code? =
+
+Yes. Define WP_SCSS_OPTIONS in wp-config.php as an array using the same keys as the settings page (base_compiling_folder, scss_dir, css_dir, cache_dir, compiling_options, sourcemap_options, errors, enqueue, always_recompile). The keys you set override the saved settings. See the readme on GitHub for an example.
+
 = Does this plugin support Compass? =
 
 Currently there isn't a way to fully support [compass](https://github.com/chriseppstein/compass) with a php compiler. If you want limited support, you can manually import the compass framework. You'll need both the _compass.scss and compass directory.
@@ -72,6 +72,8 @@ Do you have errors printing to the front end? If not, check the PHP error log (w
 
 Make sure your directories are properly defined in the settings. Paths are defined from the root of the theme.
 
+You can force a compile with the Compile Now button on the settings page. To compile from a deploy script, define WP_SCSS_COMPILE_KEY in wp-config.php and POST action=wpscss_compile&key=YOUR_KEY to wp-admin/admin-post.php.
+
 
 = I'm having other issues and need help =
 
@@ -79,6 +81,16 @@ If you are having issues with the plugin, create an issue on [github](https://gi
 
 
 == Changelog ==
+
+= 5.1.1 =
+  - Fix: WP-CLI commands no longer log "Trying to access array offset on null" warnings, and compile errors and Always Recompile now work under WP-CLI. [#285](https://github.com/ConnectThink/WP-SCSS/pull/285)
+  - Fix: a failed compile can no longer leave files in the cache that go live on the next successful compile, and a failed cache write now stops the compile instead of publishing an older cached file. [#286](https://github.com/ConnectThink/WP-SCSS/pull/286)
+
+= 5.1.0 =
+  - New: a Compile Now button on the settings page, and an optional deploy webhook (define WP_SCSS_COMPILE_KEY, then POST to admin-post.php) to compile after a deploy. [#281](https://github.com/ConnectThink/WP-SCSS/pull/281), closes [#48](https://github.com/ConnectThink/WP-SCSS/issues/48)
+  - New: define WP_SCSS_OPTIONS in wp-config.php to set the plugin's settings in code; any key you set overrides the saved value. [#282](https://github.com/ConnectThink/WP-SCSS/pull/282), closes [#222](https://github.com/ConnectThink/WP-SCSS/issues/222)
+  - Fix: the File source map mode writes the .map file again (it had silently stopped). [#280](https://github.com/ConnectThink/WP-SCSS/pull/280), closes [#207](https://github.com/ConnectThink/WP-SCSS/issues/207)
+  - Fix: an unreadable SCSS or CSS directory shows an admin notice instead of a fatal error on every page. [#279](https://github.com/ConnectThink/WP-SCSS/pull/279), closes [#187](https://github.com/ConnectThink/WP-SCSS/issues/187)
 
 = 5.0.0 =
   - Updates ScssPHP to version [1.13.0](https://github.com/scssphp/scssphp/releases/tag/v1.13.0), the final 1.x release, and removes stray ScssPHP 2.x development files that had been bundled by mistake. [#275](https://github.com/ConnectThink/WP-SCSS/pull/275)
